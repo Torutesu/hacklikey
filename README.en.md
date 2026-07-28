@@ -173,6 +173,7 @@ Roughly the order I'd pick them up.
 5. Multi-frame trails. Right now one trail shares one capture. I'd like to record flows that cross several screens.
 6. Tests for `recall.ts`. Threshold regressions fail silently and hurt.
 7. A real hotkey. Space only works while the tab has focus. An extension or a thin desktop shell would bring back Clicky's "works while you're inside another app" property. That's the one thing choosing the web actually costs.
+8. Multiple monitors. `getDisplayMedia()` hands back one surface, so right now the answer is scoped to the single screen you shared. It would mean capturing several and carrying a screen ID alongside the coordinates.
 
 ## Third-party code and assets
 
@@ -184,3 +185,5 @@ Roughly the order I'd pick them up.
 | Everything under `src/` | Written for this assignment | — |
 
 No code was carried over from my own earlier projects. No third-party code, images, text or design data was used, including from Clicky. The wireframes in `src/lib/seed.ts` are SVG written for this repository, and the icons are hand-written inline SVG.
+
+Clicky's source is public under the MIT licence ([farzaa/clicky](https://github.com/farzaa/clicky)), so reusing it would have been permitted. I didn't read a line of it while building this. Partly that's because a Swift menu-bar app and a web app share very few assumptions, but mostly because what's worth showing here is my own design reasoning. Comparing afterwards, two things landed the same way independently: Claude for reading the screen and pointing, and push-to-talk rather than always-listening. The pointing mechanism differs — Clicky embeds `[POINT:x,y:label:screenN]` markup in the response text and parses it out, where I constrain coordinates through a JSON schema. Mine can't fail to parse; theirs supports multiple monitors, which mine doesn't.
