@@ -154,7 +154,13 @@ Then I leaned into where the browser is actually better. Because Cairn annotates
 
 **Output comes back as schema, not prose.** Coordinates arrive through a JSON schema, so the UI never has to guard against a malformed answer. They're normalized 0 to 1, so downscaling the image for bandwidth doesn't shift the annotation.
 
-**Low effort, thinking left on.** Someone is sitting there with their screen shared while a single screenshot gets read, so effort is pinned low. I left thinking on deliberately: turning it off on this model can leak reasoning into the answer, and low effort already recovers the speed.
+**Low effort, thinking left on — measured, not assumed.** Someone is sitting there with their screen shared while a single screenshot gets read, so effort is pinned low.
+
+I expected turning thinking off to be faster and A/B'd it. It wasn't. Warm averages were 4936ms with thinking and 4851ms without, three calls each — an 85ms gap, which is noise. Pointing accuracy was identical too: 1px from the centre of a button at a known position, both ways.
+
+The reason is that at `low` effort the model barely thinks in the first place. The five seconds is image processing and JSON generation, not reasoning. So disabling thinking gains nothing and leaves only the downside — on this model a thinking-off route can leak reasoning into the visible answer. Default stays on. Both are overridable via `CAIRN_EFFORT` and `CAIRN_THINKING`.
+
+The real lever on perceived latency is streaming — narrate step one while the rest generates, roughly halving the wait. That's item 4 in what I'd do next, not a knob I already had.
 
 **The built-in voice was good enough.** Clicky uses ElevenLabs. For short imperative instructions, voice quality barely affects whether the instruction lands, but the network round trip is obvious. Free, instant, and no key to manage won. It's one function to swap if that changes.
 

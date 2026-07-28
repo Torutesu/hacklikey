@@ -22,6 +22,28 @@ import type { ModelAnswer } from "./types";
 
 const MODEL = "claude-opus-5";
 
+/**
+ * Reasoning depth, tunable without a redeploy.
+ *
+ * Exposed as config because the right setting here is an empirical question
+ * about latency-versus-accuracy on real screenshots, not something to settle by
+ * argument. Defaults are what measured best: effort `low`, thinking on.
+ *
+ * Turning thinking off is a real option for this workload — reading one
+ * screenshot is perception, not multi-step reasoning — and it is measurably
+ * faster. It is not the default because on this model a disabled-thinking route
+ * can leak reasoning into the visible answer. Structured output makes that
+ * unlikely here (the response has to satisfy the schema), but "unlikely" is a
+ * poor default for the one thing the user actually reads.
+ */
+function reasoningConfig(): { effort: "low" | "medium" | "high"; thinkingDisabled: boolean } {
+  const effort = process.env.CAIRN_EFFORT;
+  return {
+    effort: effort === "medium" || effort === "high" ? effort : "low",
+    thinkingDisabled: process.env.CAIRN_THINKING === "disabled",
+  };
+}
+
 const ANSWER_SCHEMA = {
   type: "object",
   properties: {
@@ -197,14 +219,17 @@ export async function readScreen(
 ): Promise<ModelAnswer> {
   if (!process.env.ANTHROPIC_API_KEY) throw new MissingApiKeyError();
 
+  const { effort, thinkingDisabled } = reasoningConfig();
+
   let response;
   try {
     response = await getClient().messages.create({
       model: MODEL,
       max_tokens: 2048,
       system: SYSTEM,
+      ...(thinkingDisabled ? { thinking: { type: "disabled" as const } } : {}),
       output_config: {
-        effort: "low",
+        effort,
         format: { type: "json_schema", schema: ANSWER_SCHEMA },
       },
       messages: [
