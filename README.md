@@ -1,241 +1,196 @@
 # Cairn
 
-**Screen-aware help that your team keeps.**
+Share your screen, ask a question out loud, and Cairn points at the answer on screen and talks you through it.
 
-Share a screen, ask out loud, and Cairn points at the answer. Then — the part that isn't Clicky — that answer becomes a **trail** your teammates inherit, so the second person to hit the same wall gets it instantly instead of asking the model again.
+Then it keeps the answer. Anything Cairn works out for you can be saved as a "trail", and the next person on your team who asks the same thing gets that trail back instantly instead of waiting on the model again.
 
-> A cairn is the stack of stones one traveller leaves so the next one doesn't get lost.
+The name comes from the piles of stones hikers leave to mark a path for whoever comes next.
 
----
+Live demo: _(deploying — URL will go here)_
 
-## 概要 (日本語)
+## 概要
 
-Clicky を参考に、**「画面を見て、指し示し、そしてチームのために憶える」** AI アシスタントとして再設計した Web アプリケーションです。
+Clicky を参考にしつつ、「画面を見て教える」だけでなく「チームのために憶える」ところまでを含めて設計し直した Web アプリです。
 
-- **見る** — ブラウザの画面共有 API で画面を取得し、Claude の画像認識で読み取ります。インストール不要、URL を開くだけです。
-- **指す** — 「右のサイドバーにあります」と文章で説明するのではなく、実際のピクセル上をカーソルが移動し、対象のボタンを囲んで音声で案内します。
-- **憶える** — 解決した手順は「トレイル」として保存され、チーム全体の資産になります。次に同じ質問をした人には、**モデルを呼ばずに数ミリ秒で**同じ手順が再生されます。
+画面共有 API で画面を取得して Claude が読み取り、対象のボタンの位置にカーソルを動かしながら音声で案内します。ブラウザだけで動くのでインストールは不要です。
 
-Clicky は macOS ネイティブですが、本実装は意図的に Web を選びました。「審査担当の方が URL を開くだけで即座に操作できること」を最優先したためです。詳細は [Key decisions](#key-decisions) をご覧ください。
+Clicky と一番違うのは記憶する点です。Clicky の支援は 1 対 1 で、答えた瞬間に消えます。同じ問題に 5 人がぶつかれば 5 回モデルに聞くことになります。Cairn では解決した手順が「トレイル」として残り、2 人目以降はモデルを呼ばずに数ミリ秒で同じ手順を再生できます。使うほど速くなり、コストも下がります。
 
-Clicky との最大の違いは **記憶** です。Clicky の支援は 1 対 1 で、答えた瞬間に消えます。Cairn では答えが蓄積され、チームで使うほど速く・安くなります。これが「複数人での利用を想定した構造」と「AI ネイティブな新しい働き方」に対する私なりの回答です。
+これが「複数人での利用を想定した構造」に対する自分なりの答えです。
 
----
+なお Clicky は macOS ネイティブですが、本実装では意図的に Web を選びました。理由は下の「作るときに決めたこと」に書いています。
 
-## The product thesis
+## なぜこれを作ったか
 
-Clicky's core loop is excellent: hotkey → it sees your screen → you ask out loud → it answers and draws on your screen. I kept that loop.
+Clicky のコアな体験はよくできています。ホットキーを押す、画面を見てもらう、声で聞く、画面上で指してもらう。ここは素直に踏襲しました。
 
-But that help is **1:1 and ephemeral**. The moment it's given, it evaporates. If five people on a team hit the same wall, the model is asked five times, five people wait, and the company pays five times — for knowledge it already produced on day one.
+ただ、その助けはその場限りです。答えた瞬間に消えます。
 
-So Cairn adds one thing, and organises everything else around it:
+そこで一点だけ足しました。**答えをトレイルとして保存でき、質問が来たら必ずモデルより先にトレイルを検索する。** 順番が逆だと意味がありません。
 
-> **Every answer can become a trail. Recall runs *before* the model, never after.**
+その結果こうなります。
 
-The consequences are what make it a different product rather than a feature:
-
-| | Clicky | Cairn |
+|  | Clicky | Cairn |
 |---|---|---|
-| Second person to ask | Full model call, full wait | Recalled in **~3 ms**, no model call |
-| Value over time | Flat | Compounds — the library grows |
-| Cost over time | Linear in questions asked | Sub-linear — repeats are free |
-| Unit of value | An answer | An asset the team owns |
+| 2 人目が同じ質問をしたとき | 毎回モデルを呼ぶ | 約 3ms で返る、モデル呼び出しなし |
+| 使い続けたときの価値 | 横ばい | 蓄積して増える |
+| コスト | 質問数に比例 | 繰り返しは無料 |
 
-That is also why the UI colour-codes provenance rather than captioning it: **green means someone already solved this**, amber means it was just read off your screen. It's the one distinction a user needs to internalise, so it gets a colour instead of a sentence.
+UI で色を分けているのもこのためです。緑は「誰かがもう解決済み」、オレンジは「いま画面から読んだ」。ユーザーに覚えてもらいたい区別はこれ一つなので、文章で説明せず色にしました。
 
----
+## 主な機能
 
-## Main features
+画面を共有して声で質問すると、1〜4 ステップの手順が返ってきます。各ステップには画面上のどこを指すかの座標が入っていて、周りを暗くして対象を丸で囲み、そこにカーソルが飛んでいきます。読み上げもします。
 
-**The live half**
-- **Screen capture** via `getDisplayMedia()` — any window, tab, or full screen. Nothing is captured until you actually ask.
-- **Hold-to-talk** on `Space` (or the button), transcribed with the Web Speech API, with a typed fallback that is always present.
-- **Pointed guidance** — the answer is 1–4 steps, each with a normalized bounding box. The UI dims everything else, rings the target, and flies a cursor onto it.
-- **Spoken answers** via SpeechSynthesis, step by step.
-- **Frame freezing** — when an answer lands, the preview freezes to the exact frame that was sent. The annotation describes *that* moment; leaving live video running would drift the highlight off its target the instant you move a window.
+音声入力は Space の長押し（またはボタン長押し）です。文字入力もどこでも使えるようにしてあります。Firefox など音声認識が使えないブラウザもあるので、音声は速い方の手段であって唯一の手段にはしていません。
 
-**The memory half**
-- **Instant recall** — before any model call, the question is matched against the team's trails. A hit returns in single-digit milliseconds and is visibly labelled as such.
-- **Save as trail** — one click promotes a live answer into team memory, with search aliases derived automatically so it's findable by someone who phrases it differently.
-- **Replay** — step through the original author's frames with the original annotations, narrated. Not a wiki page describing the sidebar; the sidebar as the person who solved it saw it.
-- **Library** — searchable, showing who recorded each trail and how many re-asks it has saved.
+答えが返ってきた瞬間に、プレビューはモデルに送った画像で固定されます。ここを固定しないと、ウィンドウを動かした瞬間にハイライトが実際のボタンからずれます。
 
----
+保存側は、答えの下の「Save as trail」を押すだけです。検索用の言い換えは質問文とタイトルから自動で作るので、別の言い方で聞いた人にも当たります。ライブラリは検索でき、誰が書いたか、何回再利用されたかが出ます。トレイルを開くと、書いた人の画面と注釈のまま、読み上げ付きで再生できます。
 
-## Tech
+## 使っている技術
 
-| Layer | Choice | Why |
-|---|---|---|
-| Framework | Next.js 16 (App Router) + React 19 | One deployable unit for UI and API; the API key never reaches the browser. |
-| Language | TypeScript (strict) | The domain is small but the coordinate/provenance handling is fiddly — types carry it. |
-| Styling | Tailwind CSS v4 | Design tokens live in `globals.css` as CSS variables; no component library, so the UI has its own character. |
-| Vision | Claude (`claude-opus-5`) with structured outputs | Reads UI screenshots and returns pointer geometry, schema-constrained. |
-| Capture | `navigator.mediaDevices.getDisplayMedia()` | The web's ScreenCaptureKit. No install. |
-| Voice | Web Speech API (in + out) | Zero cost, zero latency, no key. See [Key decisions](#key-decisions). |
-| Storage | Pluggable `TrailStore` — in-memory or Upstash Redis | Runs with no infrastructure; becomes genuinely shared with two env vars. |
-| Hosting | Vercel | Public URL, free tier. |
+| | |
+|---|---|
+| Next.js 16 (App Router) + React 19 | UI と API を 1 つでデプロイできる。API キーがブラウザに出ない |
+| TypeScript | 座標まわりが地味にややこしいので型で持たせている |
+| Tailwind CSS v4 | デザイントークンは `globals.css` に CSS 変数で置いている |
+| Claude (`claude-opus-5`) | 画面の読み取り。structured outputs で座標を返させる |
+| `getDisplayMedia()` | 画面キャプチャ |
+| Web Speech API | 音声入力と読み上げ |
+| Upstash Redis（任意） | トレイルの共有保存 |
+| Vercel | ホスティング |
 
-No UI kit, no state library, no ORM. At this size they would have been ceremony.
+UI ライブラリ、状態管理ライブラリ、ORM は入れていません。この規模だと管理コストの方が高くつきます。
 
----
+## システム構成
 
-## System architecture
+質問が来たときの流れです。ここが設計の中心です。
 
 ```
-Browser
-  ├─ getDisplayMedia ──► <video> ──► canvas ──► JPEG @1600px ──┐
-  ├─ SpeechRecognition ──► question text ─────────────────────┤
-  │                                                           ▼
-  │                                             POST /api/ask
-  │                                                           │
-  │                                     ┌─────────────────────┴────────────────┐
-  │                                     │ 1. recall(question, trails)          │
-  │                                     │    lexical match over the team's     │
-  │                                     │    trails — runs FIRST, always       │
-  │                                     └────────┬──────────────────┬──────────┘
-  │                                         hit  │                  │  miss
-  │                                   (~3ms, free)                  │
-  │                                              │                  ▼
-  │                                              │    2. Claude vision call
-  │                                              │       schema-constrained:
-  │                                              │       steps[] + targets[]
-  │                                     ┌────────┴──────────────────┴──────────┐
-  │                                     │       AskResult { source, … }        │
-  │◄────────────────────────────────────┴──────────────────────────────────────┘
-  │
-  ├─ PointerOverlay  → SVG spotlight mask + ring + animated cursor
-  ├─ SpeechSynthesis → speaks each step
-  └─ "Save as trail" → POST /api/trails → TrailStore
+ブラウザ
+  getDisplayMedia → <video> → canvas → JPEG(長辺1600px)
+  SpeechRecognition → 質問テキスト
+        ↓
+  POST /api/ask
+        ↓
+  1. recall(質問, 全トレイル)   ← 必ず最初に走る
+        ├─ ヒット  → 約3ms、モデル呼び出しなし
+        └─ ミス    → 2. Claude に画像 + 質問を投げる
+                      structured outputs で steps[] と座標
+        ↓
+  AskResult { source: "trail" | "model", steps, ... }
+        ↓
+  PointerOverlay（SVG マスクで周囲を暗くする + カーソル）
+  SpeechSynthesis（読み上げ）
+  「Save as trail」→ POST /api/trails → TrailStore
 ```
 
-**Source layout**
+ファイル構成:
 
 ```
 src/
   app/
-    page.tsx                  App shell, tabs, first-run welcome
-    api/ask/route.ts          Recall-then-model. The core decision lives here.
-    api/trails/route.ts       List / search / save
-    api/trails/[id]/route.ts  Single trail
+    page.tsx                  シェル、タブ、初回の説明
+    api/ask/route.ts          recall → model の順序。設計の中心はここ
+    api/trails/route.ts       一覧 / 検索 / 保存
+    api/trails/[id]/route.ts  単体取得
   components/
-    AskPanel.tsx              Live loop: capture, dictate, answer, save
-    PointerOverlay.tsx        The "look here" annotation
-    TrailLibrary.tsx          Searchable library + useTrails hook
-    TrailReplay.tsx           Narrated replay of a saved trail
+    AskPanel.tsx              キャプチャ、音声、回答、保存
+    PointerOverlay.tsx        画面上の指し示し
+    TrailLibrary.tsx          ライブラリと useTrails
+    TrailReplay.tsx           トレイル再生
   lib/
-    claude.ts                 The single model call + output schema
-    recall.ts                 Question → trail matching
-    store.ts                  TrailStore interface + two adapters
-    capture.ts                Screen capture, downscaling
-    speech.ts                 Voice in/out with graceful degradation
+    claude.ts                 モデル呼び出しと出力スキーマ
+    recall.ts                 質問 → トレイルの照合
+    store.ts                  TrailStore とアダプタ 2 種
+    capture.ts                キャプチャと縮小
+    speech.ts                 音声入出力
     types.ts, seed.ts
 ```
 
-The dependency direction is one-way: `components → lib`, and `lib` modules don't import each other except through types. Storage sits behind an interface, so making memory genuinely shared is a deployment concern, not a code change.
+依存の向きは `components → lib` の一方向で、`lib` 同士は型以外で参照し合いません。保存はインターフェースの裏にあるので、共有ストレージへの切り替えはコードではなく環境変数の話になります。
 
----
+## セットアップ
 
-## Setup
-
-Requires Node 20+.
+Node 20 以上が必要です。
 
 ```bash
 git clone https://github.com/Torutesu/hacklikey.git
 cd hacklikey
 npm install
 
-cp .env.example .env.local     # add ANTHROPIC_API_KEY
+cp .env.example .env.local     # ANTHROPIC_API_KEY を入れる
 npm run dev                    # http://localhost:3000
 ```
 
-**Without an API key it still runs** — the trail library, search, recall, and replay all work, and asking a live question returns a clear "live answers are off" message rather than failing opaquely. That was deliberate: a reviewer should never hit a blank screen.
+APIキーがなくても動きます。トレイルの一覧、検索、recall、再生は全部動いて、ライブ質問だけ「今は使えません」と表示されます。確認する方が真っ白な画面に当たらないようにするためです。
 
-**Optional — shared team memory.** Unset, trails live in memory and reset when the server sleeps. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (free tier, or the Vercel Upstash integration) and trails become genuinely shared across everyone using the deployment. The UI states which mode it's in rather than leaving it ambiguous.
+トレイルを本当に共有したい場合は `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` を設定します。未設定だとメモリ上に持つので、サーバーが落ちると保存したトレイルは消えます。今どちらのモードかは画面に出しています。
 
-Use **Chrome or Edge** for the full experience. Screen capture works in desktop Safari; voice *input* is Chromium-only, so every voice affordance has a typed equivalent.
+ブラウザは Chrome か Edge を推奨します。画面共有は Safari でも動きますが、音声入力は Chromium 系のみです。
 
----
+## 実装した範囲
 
-## What's implemented
+上に書いたものは全部動きます。画面キャプチャ、フレームの固定、音声入出力とテキスト入力、Claude の呼び出しと座標のクランプ、recall とその出所・所要時間の表示、トレイルの保存 / 検索 / 再生、ストレージ 2 種類、初回説明、空の状態とエラー表示、`prefers-reduced-motion` 対応まで含みます。
 
-Everything described above is built and working end to end:
+## 簡略化した範囲
 
-- Screen capture, frame grabbing, downscaling, frame freezing
-- Voice input (hold-to-talk + `Space`), voice output, typed fallback
-- Claude vision call with schema-constrained output and coordinate clamping
-- Recall-before-model, with provenance and timing surfaced in the UI
-- Save / search / browse / replay trails
-- Two storage adapters behind one interface
-- First-run onboarding, empty states, error states, `prefers-reduced-motion`
-- Graceful degradation for every browser capability it uses
+2 日で何を作らなかったかも判断のうちだと思うので、正直に書きます。
 
-## What's simplified or mocked
+**認証とユーザー**。ログインはありません。自分は "You" 固定で、初期トレイルの著者（Priya、Marco、Yuki）はモックです。認証は作り方が分かりきっている割に時間を食い、このプロダクトの主張を何も証明しません。データモデルには `Author` を持たせてあるので、差し替えであって作り直しにはなりません。
 
-Stated plainly, because knowing what I chose *not* to build in two days is part of the answer:
+**チームの区切り**。ワークスペースや権限はなく、ライブラリは 1 つです。理由は同じで、示したいのは複数人で使う構造の方だからです。
 
-| Area | What I did | Why |
+**recall の照合**。単語の重なりと軽いステミングだけで、埋め込みは使っていません。埋め込みにすると 1 往復増えて、recall が節約するはずのレイテンシをほぼ使い切ります。ベクトルストアも要ります。最初に改善するならここです。
+
+**初期トレイルの画像**。実際のスクリーンショットではなく、生成したワイヤーフレームです。他社の UI のスクリーンショットは同梱できません。プレースホルダだと見て分かる見た目にしつつ、再生時に注釈を乗せる位置は本物と同じように扱えます。自分で録ったトレイルには実際のキャプチャが入ります。
+
+**エージェント機能**。作っていません。Clicky の Notion / Gmail / Linear 連携は、認証も同意設計も別物の、事実上もう一つのプロダクトです。2 日でやると浅い模倣になりますし、Clicky の良さの本体はそこではないと判断しました。
+
+**読み上げ**。ElevenLabs ではなくブラウザの SpeechSynthesis です。理由は下に書きます。
+
+**テスト**。書いていません。この期間での正直なトレードオフです。`recall.ts` と `capture.ts` は副作用がなくテストしやすく書いてあるので、書くならそこからです。
+
+## 作るときに決めたこと
+
+**Web にした理由。** Clicky は macOS ネイティブで、実際のデスクトップに描画します。ブラウザにはそれができません。自分のページの中しか触れません。それでも Web を選んだのは、この課題で一番効いてくる制約が「相手が実際に操作できること」だからです。URL を開くだけなら OS を問わず、インストールも署名も要りません。
+
+その上で、ブラウザ側が有利になる点に寄せました。Cairn は実画面ではなくミラーしたフレームに注釈を描くので、その注釈付きフレームはそのまま共有でき、再生もできます。チームの記憶に必要なのはまさにそれです。制約と機能が同じものになりました。
+
+**recall はモデルの前に置く。** 後ろに置くとただのキャッシュで、完全一致した質問にしか当たりません。前に置くと「チームが既に解いた問題かどうか」を先に見ることになります。`/api/ask` が最初にやるのはこれです。
+
+**recall のしきい値は高めにした。** 迷ったらモデルを呼ぶ方に倒しています。関係ないトレイルを自信ありげに見せる方が、3 秒待たせるよりずっと信頼を損ないます。損失が非対称なので、しきい値も非対称にしています。
+
+**出力は文章ではなくスキーマで受ける。** 座標を JSON スキーマで返させているので、UI 側で壊れた出力を警戒する必要がありません。座標は 0〜1 の正規化で持たせていて、帯域のために画像を縮小しても注釈がずれません。
+
+**effort は low、thinking は切らない。** ユーザーが画面共有したまま待っている、スクリーンショット 1 枚を読むだけの処理なので low にしています。thinking はあえて残しました。このモデルでは切ると推論が回答側に混ざることがあり、low だけで十分速くなるからです。
+
+**読み上げはブラウザ内蔵で十分だった。** Clicky は ElevenLabs を使っています。短い命令文だと音声の質は「指示が伝わるか」をほぼ変えませんが、往復のレイテンシははっきり体感できます。無料で、即座に鳴って、鍵の管理も要らない方を選びました。差し替えるとしても関数 1 つです。
+
+**保存はインターフェースの裏に置いて、既定はゼロ設定。** アカウントを持たない人が clone してもすぐ動いてほしい一方、共有できる記憶も見せたい。アダプタ 2 つで両方満たせます。今どちらで動いているかは画面に出しています。
+
+**ダーク 1 テーマ、アクセントは 2 色だけ。** Cairn は実際に作業しているアプリの横に置くものなので、主役を張らない見た目にしています。オレンジと緑はライブ回答と recall の区別にしか使っていません。装飾ではなく意味に色を割り当てたかったからです。
+
+## 次にやりたいこと
+
+だいたいこの順で手を付けます。
+
+1. 認証とワークスペース。一番効く穴で、形は用意してあるけど繋がっていません。
+2. recall のハイブリッド化。今の単語一致は速いので残したまま、外れたときだけ埋め込みで second pass する。「書き出した画像の解像度が足りない」みたいな聞き方でも 3x のトレイルに当たるようにしたい。
+3. トレイルの陳腐化。UI は変わるので、保存済みフレームと今の画面がずれてきたトレイルには古い印を付けたい。長期的にライブラリを信用できるかはここ次第だと思っています。
+4. ストリーミング。1 ステップ目を読み上げ始めながら残りを生成すれば、体感待ち時間はほぼ半分になります。
+5. 複数フレームのトレイル。今は 1 トレイルが 1 キャプチャを共有しています。画面をまたぐ手順を録れるようにしたい。
+6. `recall.ts` のテスト。しきい値の劣化は静かに起きて、しかも痛いので。
+7. 本物のホットキー。Space はタブにフォーカスがある間しか効きません。拡張機能か薄いデスクトップシェルがあれば、Clicky の「別のアプリを触っている最中でも使える」性質が戻ります。Web にしたことで実際に失っているのはここだけです。
+
+## 外部のコードと素材
+
+| 対象 | 出所 | ライセンス |
 |---|---|---|
-| **Auth / identity** | No login. You are a hard-coded "You"; seeded trails have mock authors (Priya, Marco, Yuki). | Auth is well-understood and would have consumed a large share of the time while demonstrating nothing about this product's thesis. The data model already carries `Author`, so real identity is a swap, not a refactor. |
-| **Team boundaries** | One global library; no workspaces or permissions. | Same reasoning. The multi-user *structure* is what's being demonstrated; the tenancy boundary is a `WHERE` clause. |
-| **Recall matching** | Lexical (token overlap + light stemming), not embeddings. | An embedding round-trip would cost most of the latency recall exists to save, and needs a vector store to justify itself. Documented as the first thing I'd upgrade. |
-| **Seeded trail frames** | Schematic wireframes, not real screenshots. | I can't ship screenshots of other companies' UIs. They read honestly as placeholders while still giving replay real geometry. Trails you record yourself carry actual captures. |
-| **Agent mode** | Not built. | Clicky's Notion/Gmail/Linear automation is a genuinely different product surface with its own auth and consent design. In two days it would have been a shallow imitation, and it isn't what makes Clicky good. |
-| **Hosted TTS** | Browser SpeechSynthesis, not ElevenLabs. | See below. |
-| **Tests** | None. | The honest tradeoff for scope at this timescale. `recall.ts` and `capture.ts` are pure and were written to be testable; they're where I'd start. |
+| Next.js, React, Tailwind CSS | npm、未改変 | MIT |
+| `@anthropic-ai/sdk` | npm、未改変 | MIT |
+| Geist / Geist Mono | `next/font` 経由 | SIL OFL 1.1 |
+| `src/` 以下 | 本課題のために作成 | — |
 
----
-
-## Key decisions
-
-**1. Web, not a native app — and why that's a re-design rather than a downgrade.**
-Clicky is macOS-native and draws on your real desktop. A browser cannot do that; it can only annotate inside its own page. I chose the web anyway, because the binding constraint on this assignment is *"the company must be able to actually operate it"* — a URL beats an unsigned binary, works on every OS, and needs no install. I then leaned into what the browser makes *better*: because Cairn annotates a mirrored frame rather than a live desktop, that annotated frame is inherently shareable and replayable — which is exactly what team memory needs. The limitation and the feature turn out to be the same fact.
-
-**2. Recall runs before the model, not as a cache after it.**
-A cache keyed on inputs would only hit on an identical question. Recall matches *intent* against what the team has already solved, and it is the first thing `/api/ask` does. This ordering is the product: it's why the second person doesn't wait.
-
-**3. Lexical recall, tuned to prefer a model call over a wrong trail.**
-The threshold is set high on purpose. Showing someone a confidently irrelevant walkthrough is far more damaging to trust than making them wait three seconds. Asymmetric costs deserve asymmetric thresholds.
-
-**4. Structured outputs instead of parsing prose.**
-Pointer coordinates come back through a JSON schema, so geometry is structurally guaranteed and the UI never has to defend against a malformed answer. Coordinates are normalized 0–1, so the client can downscale frames for bandwidth without annotations drifting.
-
-**5. Low effort, thinking left on.**
-This is a latency-critical single-screenshot reading task with a user waiting. Effort is pinned to `low`. Thinking is deliberately *not* disabled — on this model disabling it can leak reasoning into the visible answer, and low effort already recovers the latency.
-
-**6. Browser speech over hosted TTS.**
-Clicky uses ElevenLabs. For short imperative instructions, hosted voice quality doesn't change whether the instruction lands, but the network round-trip is very noticeable — and it adds a key to manage and a per-word cost. Free, instant, and local was the better trade. It's one function to swap.
-
-**7. Storage behind an interface, defaulting to zero-config.**
-The app must run for a reviewer who clones it with no accounts, *and* demonstrate genuinely shared memory. Two adapters behind one interface gets both, and the UI is honest about which mode it's in.
-
-**8. One dark theme, two accent colours, no component library.**
-Cairn sits beside the app you're actually working in, so it stays visually subordinate rather than competing. Ember and moss are used for exactly one thing — live answer vs. recalled answer — so colour carries the core idea instead of decoration.
-
----
-
-## What I'd do next
-
-Roughly in the order I'd actually pick them up:
-
-1. **Real identity and workspaces.** The highest-value gap. Everything is shaped for it; nothing is wired to it.
-2. **Hybrid recall.** Keep the lexical pass as the instant path, add embeddings as a second pass on miss. Semantically related questions ("resolution too low on export") would then find the 3x trail.
-3. **Trails that decay.** Software UIs change. A trail whose frames no longer match the live screen should be flagged as stale — detectable by comparing a fresh capture against the stored frame, and the single biggest long-term risk to trusting the library.
-4. **Streamed answers.** Speak step one while the rest is still generating, to cut perceived latency roughly in half.
-5. **Multi-frame trails.** Today a trail's steps share one capture. Recording across several screens would let a trail span a genuine multi-screen flow.
-6. **Tests** around `recall.ts` (threshold regressions are silent and expensive) and the coordinate clamping.
-7. **A real hotkey.** `Space` only works while the tab is focused. A browser extension or a thin desktop shell would restore Clicky's "works while you're in the other app" property, which is the one thing the web genuinely costs.
-
----
-
-## Third-party code and assets
-
-| Item | Source | Licence |
-|---|---|---|
-| Next.js, React, Tailwind CSS | npm, unmodified | MIT |
-| `@anthropic-ai/sdk` | npm, unmodified | MIT |
-| Geist / Geist Mono fonts | Bundled via `next/font` | SIL Open Font License 1.1 |
-| Everything in `src/` | Written for this assignment | — |
-
-No code was reused from prior personal projects, and no assets, screenshots, code, or design data were taken from Clicky or any other third party. The wireframe frames in `src/lib/seed.ts` are generated SVG written for this repository. Icons and the Cairn mark are hand-written inline SVG.
-
-Developed with AI coding assistance, which the assignment expressly permits.
+過去に自分で書いたコードの流用はありません。Clicky を含む第三者のコード、画像、文章、デザインデータは使っていません。`src/lib/seed.ts` のワイヤーフレームはこのリポジトリ用に書いた SVG で、アイコンも手書きの inline SVG です。
