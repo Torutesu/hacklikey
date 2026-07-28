@@ -162,6 +162,12 @@ Then I leaned into where the browser is actually better. Because Cairn annotates
 
 **One dark theme, two accent colours.** Cairn sits next to whatever you're actually working in, so it shouldn't compete for attention. Orange and green are used only to distinguish a live answer from a recalled one. I wanted colour carrying meaning rather than decoration.
 
+**Rate limiting, but only on the path that costs money.** The deployment is a public URL with no login, so `/api/ask` is reachable by anyone who finds it, and everything past the recall check is a billable model call. There are per-IP limits by minute and by hour, plus a global daily cap (default 100, roughly $3 of exposure). Hitting any of them still leaves trail browsing and replay working.
+
+The part worth noting is that **recall hits are never counted**. Only real model calls consume quota, so the more the team's memory grows, the more questions the same budget answers. Accumulating trails pays off in cost as well as latency — the limiter makes that concrete rather than rhetorical.
+
+Without Upstash the counters live per serverless instance and reset on cold start, so the effective ceiling sits above the configured one. It stops runaway loops and casual abuse; it is not an airtight budget cap, and the README says so rather than implying otherwise.
+
 ## What I'd do next
 
 Roughly the order I'd pick them up.

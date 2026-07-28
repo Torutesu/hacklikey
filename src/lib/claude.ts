@@ -115,6 +115,75 @@ export class MissingApiKeyError extends Error {
 }
 
 /**
+ * Upstream failures the user might actually hit, translated into things worth
+ * reading.
+ *
+ * The raw SDK error is a JSON blob with a request id in it — fine in a log,
+ * useless in a UI, and it leaks provider internals to anyone poking at the
+ * public endpoint. Each of these maps to a specific recovery, and every one is
+ * a state a reviewer could plausibly land in: an exhausted balance, a revoked
+ * key, a busy upstream. `cause` keeps the original for the server log.
+ */
+export class UpstreamError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryable: boolean,
+    cause?: unknown,
+  ) {
+    super(message);
+    this.name = "UpstreamError";
+    this.cause = cause;
+  }
+}
+
+/**
+ * Anthropic reports an exhausted balance as a 400 rather than a 402, so the
+ * status alone isn't enough to tell it apart from a genuinely malformed
+ * request — the message has to be inspected.
+ */
+function isCreditExhausted(err: unknown): boolean {
+  if (!(err instanceof Anthropic.BadRequestError)) return false;
+  return /credit balance is too low/i.test(err.message);
+}
+
+function toUpstreamError(err: unknown): UpstreamError {
+  if (isCreditExhausted(err)) {
+    return new UpstreamError(
+      "Cairn's API credit has run out, so live answers are paused. Saved trails still work — try the Trails tab.",
+      503,
+      false,
+      err,
+    );
+  }
+  if (err instanceof Anthropic.AuthenticationError) {
+    return new UpstreamError(
+      "Cairn's API key was rejected, so live answers are off. Browsing and replaying trails still works.",
+      503,
+      false,
+      err,
+    );
+  }
+  if (err instanceof Anthropic.RateLimitError) {
+    return new UpstreamError(
+      "Too many questions reaching the model right now. Give it a few seconds.",
+      429,
+      true,
+      err,
+    );
+  }
+  if (err instanceof Anthropic.APIConnectionError) {
+    return new UpstreamError("Couldn't reach the model. Check your connection and try again.", 504, true, err);
+  }
+  // APIConnectionError is checked above this: in the TypeScript SDK it extends
+  // APIError, so testing the base class first would swallow it.
+  if (err instanceof Anthropic.APIError && typeof err.status === "number" && err.status >= 500) {
+    return new UpstreamError("The model is busy. Try that again in a moment.", 503, true, err);
+  }
+  return new UpstreamError("Cairn couldn't read your screen just then. Try asking again.", 502, true, err);
+}
+
+/**
  * Reads a screen capture and returns pointed, spoken guidance.
  *
  * @param frameBase64 Raw base64 (no data-URL prefix) of a PNG/JPEG capture.
@@ -128,27 +197,35 @@ export async function readScreen(
 ): Promise<ModelAnswer> {
   if (!process.env.ANTHROPIC_API_KEY) throw new MissingApiKeyError();
 
-  const response = await getClient().messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: SYSTEM,
-    output_config: {
-      effort: "low",
-      format: { type: "json_schema", schema: ANSWER_SCHEMA },
-    },
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: { type: "base64", media_type: mediaType, data: frameBase64 },
-          },
-          { type: "text", text: question },
-        ],
+  let response;
+  try {
+    response = await getClient().messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      system: SYSTEM,
+      output_config: {
+        effort: "low",
+        format: { type: "json_schema", schema: ANSWER_SCHEMA },
       },
-    ],
-  });
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: mediaType, data: frameBase64 },
+            },
+            { type: "text", text: question },
+          ],
+        },
+      ],
+    });
+  } catch (err) {
+    // Log the real thing (request id and all) before replacing it with
+    // something a person can act on.
+    console.error("[cairn] vision call failed:", err);
+    throw toUpstreamError(err);
+  }
 
   // Safety classifiers can decline with a normal 200 — check before reading
   // content, or this throws on an empty array.

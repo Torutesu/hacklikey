@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { MissingApiKeyError, readScreen } from "@/lib/claude";
+import { MissingApiKeyError, UpstreamError, readScreen } from "@/lib/claude";
 import { recall } from "@/lib/recall";
+import { clientIp, consumeModelCall } from "@/lib/ratelimit";
 import { getStore } from "@/lib/store";
 import type { AskResult, Step } from "@/lib/types";
 
@@ -8,6 +9,16 @@ import type { AskResult, Step } from "@/lib/types";
 export const runtime = "nodejs";
 // Every request is unique; caching here would be actively wrong.
 export const dynamic = "force-dynamic";
+// A vision call at low effort lands well inside this; the ceiling exists so a
+// hung upstream request can't pin a function instance open and bill for it.
+export const maxDuration = 60;
+
+/**
+ * Frames arrive as base64 in a JSON body. The client already downscales to
+ * 1600px (~250KB), so anything past this is either a client bug or someone
+ * probing the endpoint — reject before parsing rather than after.
+ */
+const MAX_BODY_BYTES = 6 * 1024 * 1024;
 
 interface AskBody {
   /** Bare base64, no data-URL prefix. */
@@ -26,6 +37,14 @@ interface AskBody {
 export async function POST(req: Request) {
   const started = Date.now();
 
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (declared > MAX_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "That screenshot is too large to send." },
+      { status: 413 },
+    );
+  }
+
   let body: AskBody;
   try {
     body = (await req.json()) as AskBody;
@@ -36,6 +55,9 @@ export async function POST(req: Request) {
   const question = body.question?.trim();
   if (!question) {
     return NextResponse.json({ error: "Ask a question first." }, { status: 400 });
+  }
+  if (question.length > 1000) {
+    return NextResponse.json({ error: "That question is too long." }, { status: 400 });
   }
 
   const store = getStore();
@@ -61,6 +83,17 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "Share your screen so Cairn can see what you're looking at." },
       { status: 400 },
+    );
+  }
+
+  // Spend guard sits here and nowhere else: past this line the request costs
+  // money, and everything before it was free. Validation runs first so a
+  // malformed request never burns quota.
+  const gate = await consumeModelCall(clientIp(req));
+  if (!gate.allowed) {
+    return NextResponse.json(
+      { error: gate.message, code: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(gate.retryAfter ?? 60) } },
     );
   }
 
@@ -99,8 +132,18 @@ export async function POST(req: Request) {
         { status: 503 },
       );
     }
-    const message = err instanceof Error ? err.message : "Something went wrong reading the screen.";
-    return NextResponse.json({ error: message }, { status: 502 });
+    if (err instanceof UpstreamError) {
+      return NextResponse.json(
+        { error: err.message, code: "upstream", retryable: err.retryable },
+        { status: err.status },
+      );
+    }
+    // Anything unmapped: log it, but don't hand the internals to the caller.
+    console.error("[cairn] unexpected failure in /api/ask:", err);
+    return NextResponse.json(
+      { error: "Cairn couldn't read your screen just then. Try asking again." },
+      { status: 502 },
+    );
   }
 }
 

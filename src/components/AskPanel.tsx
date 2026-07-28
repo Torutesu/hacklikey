@@ -57,6 +57,13 @@ export function AskPanel({ onTrailSaved, onOpenTrail }: AskPanelProps) {
   const stopDictationRef = useRef<(() => void) | null>(null);
   const voiceIn = isVoiceInputSupported();
 
+  /**
+   * Guards against a second paid call while one is in flight. A ref rather
+   * than state on purpose: two events in the same tick (releasing Space while
+   * also clicking Ask) would both read a stale `phase` and both fire.
+   */
+  const inFlightRef = useRef(false);
+
   /* ---------------------------------------------------------------- capture */
 
   const stopSharing = useCallback(() => {
@@ -91,7 +98,8 @@ export function AskPanel({ onTrailSaved, onOpenTrail }: AskPanelProps) {
   const ask = useCallback(
     async (text: string) => {
       const q = text.trim();
-      if (!q) return;
+      if (!q || inFlightRef.current) return;
+      inFlightRef.current = true;
 
       stopSpeaking();
       setQuestion(q);
@@ -139,6 +147,8 @@ export function AskPanel({ onTrailSaved, onOpenTrail }: AskPanelProps) {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong.");
         setPhase("error");
+      } finally {
+        inFlightRef.current = false;
       }
     },
     [sharing],
