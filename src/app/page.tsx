@@ -2,23 +2,24 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AskPanel } from "@/components/AskPanel";
-import { TrailLibrary, useTrails } from "@/components/TrailLibrary";
+import { TrailDrawer } from "@/components/TrailDrawer";
+import { useTrails } from "@/components/TrailLibrary";
 import { TrailReplay } from "@/components/TrailReplay";
 import type { Trail } from "@/lib/types";
 
 /**
  * App shell.
  *
- * Two tabs, not more. The live half and the memory half are the product; every
- * additional destination would dilute the one idea a first-time visitor needs
- * to leave with — that answers here accumulate instead of evaporating.
+ * One surface, not a set of tabs. The shared screen is the app; the library is
+ * a drawer over it and the answer is a caption on it. Tabs would mean
+ * unmounting the capture to go and read something, which costs the browser's
+ * share permission and any answer currently on screen.
  */
 
-type Tab = "ask" | "trails";
 const SEEN_KEY = "cairn.welcomed.v1";
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("ask");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [replaying, setReplaying] = useState<Trail | null>(null);
   const [welcomed, setWelcomed] = useState(true); // assume seen; corrected on mount
   const { trails, loading, storeKind, refresh } = useTrails();
@@ -34,59 +35,53 @@ export default function Home() {
     setWelcomed(true);
   }, []);
 
-  const handleSaved = useCallback(() => {
-    void refresh();
-  }, [refresh]);
-
-  const openTrail = useCallback((trail: Trail) => setReplaying(trail), []);
+  const openTrail = useCallback((trail: Trail) => {
+    setReplaying(trail);
+    setDrawerOpen(false);
+  }, []);
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-5 py-6">
-      <header className="mb-6 flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2.5">
+    <div className="relative h-full w-full overflow-hidden bg-void">
+      <AskPanel onTrailSaved={() => void refresh()} onOpenTrail={openTrail} />
+
+      {/* Floats over the stage rather than reserving a row of its own. The
+          wrapper ignores pointer events so it never eats clicks meant for the
+          screen underneath; each control opts back in. */}
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-4 px-5 py-4">
+        <div className="pointer-events-auto flex items-center gap-2.5">
           <CairnMark />
           <div>
-            <h1 className="text-[15px] font-semibold leading-none tracking-tight text-ink">
+            <h1 className="text-[14px] font-semibold leading-none tracking-tight text-ink">
               Cairn
             </h1>
-            <p className="mt-1 text-[11px] leading-none text-faint">
-              Screen-aware help that your team keeps
+            <p className="mt-1 text-[10px] leading-none text-faint">
+              Screen-aware help your team keeps
             </p>
           </div>
         </div>
 
-        <nav className="ml-auto flex rounded-lg border border-line bg-surface p-0.5">
-          {(
-            [
-              ["ask", "Ask"],
-              ["trails", `Trails${trails.length ? ` · ${trails.length}` : ""}`],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`rounded-md px-3 py-1.5 text-sm transition ${
-                tab === key ? "bg-raised text-ink" : "text-muted hover:text-ink"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="glass pointer-events-auto ml-auto flex items-center gap-2 rounded-full px-3.5 py-2 text-xs font-medium text-ink transition hover:brightness-125"
+        >
+          <TrailIcon />
+          Trails
+          {trails.length ? (
+            <span className="rounded-full bg-moss-dim/60 px-1.5 py-0.5 text-[10px] text-moss">
+              {trails.length}
+            </span>
+          ) : null}
+        </button>
       </header>
 
-      <main className="flex-1">
-        {tab === "ask" ? (
-          <AskPanel onTrailSaved={handleSaved} onOpenTrail={openTrail} />
-        ) : (
-          <TrailLibrary
-            trails={trails}
-            loading={loading}
-            storeKind={storeKind}
-            onOpen={openTrail}
-          />
-        )}
-      </main>
+      <TrailDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        trails={trails}
+        loading={loading}
+        storeKind={storeKind}
+        onOpenTrail={openTrail}
+      />
 
       {replaying ? (
         <TrailReplay trail={replaying} onClose={() => setReplaying(null)} />
@@ -100,11 +95,26 @@ export default function Home() {
 function CairnMark() {
   // Three stacked stones — the trail marker the product is named for.
   return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
       <ellipse cx="12" cy="19" rx="8" ry="2.6" fill="#232733" />
       <ellipse cx="12" cy="15.5" rx="6.4" ry="2.4" fill="#5b6072" />
       <ellipse cx="12" cy="11.6" rx="4.8" ry="2.1" fill="#8b90a3" />
       <ellipse cx="12" cy="8.2" rx="3.2" ry="1.8" fill="#ff8f4c" />
+    </svg>
+  );
+}
+
+function TrailIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 20c3-1 4-4 7-4s5 3 8 1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <circle cx="7" cy="9" r="2" fill="currentColor" />
+      <circle cx="17" cy="5" r="2" fill="currentColor" />
     </svg>
   );
 }
@@ -134,8 +144,8 @@ function Welcome({ onDismiss }: { onDismiss(): void }) {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-void/90 p-4 backdrop-blur-sm">
-      <div className="animate-rise w-full max-w-lg rounded-2xl border border-line bg-surface p-6">
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-void/90 p-4 backdrop-blur-sm">
+      <div className="animate-rise glass w-full max-w-lg rounded-2xl p-6">
         <div className="flex items-center gap-2.5">
           <CairnMark />
           <h2 className="text-lg font-semibold tracking-tight text-ink">Cairn</h2>
@@ -165,7 +175,7 @@ function Welcome({ onDismiss }: { onDismiss(): void }) {
 
         <button
           onClick={onDismiss}
-          className="mt-6 w-full rounded-lg bg-ember py-2.5 text-sm font-medium text-void transition hover:brightness-110"
+          className="mt-6 w-full rounded-xl bg-ember py-2.5 text-sm font-medium text-void transition hover:brightness-110"
         >
           Start
         </button>

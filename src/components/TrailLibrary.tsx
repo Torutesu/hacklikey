@@ -31,20 +31,18 @@ export function TrailLibrary({ trails, loading, storeKind, onOpen }: TrailLibrar
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-medium text-ink">Team trails</h2>
-          <p className="mt-0.5 text-sm text-muted">
-            {trails.length} walkthrough{trails.length === 1 ? "" : "s"} · reused {totalReuse} times
-            instead of asking again
-          </p>
-        </div>
+      {/* The drawer supplies the heading, so this is just the stats and filter. */}
+      <div className="mb-4">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search trails"
-          className="w-56 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none placeholder:text-faint focus:border-faint"
+          className="w-full rounded-lg border border-line bg-void px-3 py-2.5 text-sm text-ink outline-none placeholder:text-faint focus:border-faint"
         />
+        <p className="mt-2.5 text-xs text-muted">
+          {trails.length} walkthrough{trails.length === 1 ? "" : "s"} · reused {totalReuse} times
+          instead of asking again
+        </p>
       </div>
 
       {storeKind === "ephemeral" ? (

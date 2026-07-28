@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Caption } from "./Caption";
 import { PointerOverlay } from "./PointerOverlay";
 import {
   CaptureUnsupportedError,
@@ -19,24 +20,30 @@ import {
 import type { AskResult, Step, Trail } from "@/lib/types";
 
 /**
- * The live half of Cairn: share a screen, ask out loud, get pointed at the answer.
+ * The live half of Cairn, as a full-bleed stage.
  *
- * Two behaviours here are load-bearing and easy to break:
+ * The shared screen fills the window and every control floats over it. That
+ * ordering is the point: the user's attention belongs on their own screen, and
+ * chrome that permanently occupies a third of the viewport competes with the
+ * thing the product exists to point at. Everything here is either transient
+ * (the answer), summonable (the trails drawer), or small enough to ignore (the
+ * ask bar).
  *
- *  - When an answer arrives the preview *freezes* to the exact frame that was
- *    sent to the model. The annotation describes that moment; leaving the live
- *    video running underneath would drift the highlight off its target the
- *    instant the user moves a window.
+ * Two behaviours remain load-bearing:
+ *
+ *  - When an answer arrives the stage *freezes* to the exact frame sent to the
+ *    model. The annotation describes that moment; live video underneath would
+ *    drift the highlight off its target as soon as a window moved.
  *
  *  - Recalled trails render their original author's frames, not yours. Seeing
- *    the screen the way the person who solved it saw it is what makes a trail
- *    feel like being shown, rather than being told.
+ *    the screen as the person who solved it saw it is what makes a trail feel
+ *    like being shown rather than told.
  */
 
 type Phase = "idle" | "listening" | "thinking" | "answered" | "error";
 
 interface AskPanelProps {
-  onTrailSaved(trail: Trail): void;
+  onTrailSaved(): void;
   onOpenTrail(trail: Trail): void;
 }
 
@@ -245,7 +252,7 @@ export function AskPanel({ onTrailSaved, onOpenTrail }: AskPanelProps) {
       const data = (await res.json()) as { trail?: Trail; error?: string };
       if (!res.ok || !data.trail) throw new Error(data.error ?? "Couldn't save.");
       setSaveState("saved");
-      onTrailSaved(data.trail);
+      onTrailSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save that trail.");
       setSaveState("none");
@@ -258,326 +265,183 @@ export function AskPanel({ onTrailSaved, onOpenTrail }: AskPanelProps) {
   // Recalled trails show the author's frame; live answers show your capture.
   const displayFrame = step?.frame ?? frozen?.dataUrl ?? null;
   const showFrozen = phase === "answered" && displayFrame;
+  const listening = phase === "listening";
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[1.55fr_1fr]">
+    <div className="absolute inset-0">
       {/* ------------------------------------------------------------ stage */}
-      <div className="relative aspect-video overflow-hidden rounded-xl border border-line bg-surface">
-        <video
-          ref={videoRef}
-          muted
-          playsInline
-          className={`h-full w-full object-contain ${showFrozen ? "invisible" : ""}`}
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        className={`absolute inset-0 h-full w-full object-contain ${showFrozen ? "invisible" : ""}`}
+      />
+      {showFrozen ? (
+        <img src={displayFrame} alt="" className="absolute inset-0 h-full w-full object-contain" />
+      ) : null}
+
+      {phase === "answered" && step ? (
+        <PointerOverlay
+          target={step.target}
+          label={step.label}
+          tone={tone}
+          stepKey={`${stepIndex}-${result?.title ?? ""}`}
         />
+      ) : null}
 
-        {showFrozen ? (
-          <img
-            src={displayFrame}
-            alt=""
-            className="absolute inset-0 h-full w-full object-contain"
-          />
-        ) : null}
+      {phase === "answered" && result ? (
+        <Caption
+          result={result}
+          stepIndex={stepIndex}
+          onStep={goToStep}
+          onSave={saveTrail}
+          onReplayTrail={() => result.trail && onOpenTrail(result.trail)}
+          saveState={saveState}
+        />
+      ) : null}
 
-        {phase === "answered" && step ? (
-          <PointerOverlay
-            target={step.target}
-            label={step.label}
-            tone={tone}
-            stepKey={`${stepIndex}-${result?.title ?? ""}`}
-          />
-        ) : null}
+      {/* Empty state. Only while nothing has been answered yet. */}
+      {!sharing && phase !== "answered" ? <ShareInvite onShare={beginSharing} /> : null}
 
-        {!sharing && phase !== "answered" ? <ShareInvite onShare={beginSharing} /> : null}
+      {/* Stop-sharing affordance, deliberately quiet. */}
+      {sharing ? (
+        <button
+          onClick={stopSharing}
+          className="glass absolute right-5 top-20 z-20 rounded-full px-3 py-1.5 text-[11px] text-muted transition hover:text-ink"
+        >
+          Stop sharing
+        </button>
+      ) : null}
 
-        {phase === "thinking" ? (
-          <div className="absolute inset-x-0 bottom-0 flex items-center gap-2.5 bg-gradient-to-t from-void/95 to-transparent px-4 pb-4 pt-10 text-sm text-muted">
-            <span className="h-1.5 w-1.5 animate-ping rounded-full bg-ember" />
-            Reading your screen…
-          </div>
-        ) : null}
+      {/* ------------------------------------------------------- transient */}
+      {phase === "thinking" ? (
+        <div className="glass absolute bottom-32 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2.5 rounded-full px-4 py-2.5 text-sm text-muted">
+          <span className="h-1.5 w-1.5 animate-ping rounded-full bg-ember" />
+          Reading your screen…
+        </div>
+      ) : null}
 
-        {sharing && phase !== "answered" ? (
-          <button
-            onClick={stopSharing}
-            className="absolute right-3 top-3 rounded-full border border-line bg-void/80 px-2.5 py-1 text-[11px] text-muted backdrop-blur transition hover:text-ink"
-          >
-            Stop sharing
+      {error ? (
+        <div className="animate-rise absolute bottom-32 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-ember-dim bg-ember-dim/30 px-4 py-2.5 text-sm text-ember backdrop-blur-xl">
+          {error}
+          <button onClick={() => setError(null)} className="text-ember/60 transition hover:text-ember">
+            ✕
           </button>
-        ) : null}
+        </div>
+      ) : null}
+
+      {/* ---------------------------------------------------------- ask bar */}
+      <div className="absolute inset-x-0 bottom-0 z-30 flex justify-center px-4 pb-6">
+        <div className="glass flex w-full max-w-2xl items-center gap-2 rounded-2xl p-2">
+          {voiceIn ? (
+            <button
+              onMouseDown={beginListening}
+              onMouseUp={endListening}
+              onMouseLeave={endListening}
+              onTouchStart={beginListening}
+              onTouchEnd={endListening}
+              title="Hold to speak, or hold Space"
+              className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
+                listening
+                  ? "animate-breathe bg-ember text-void"
+                  : "bg-raised text-ink hover:bg-line"
+              }`}
+            >
+              <MicIcon />
+              {listening ? "Listening…" : "Hold to ask"}
+            </button>
+          ) : null}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const t = typed;
+              setTyped("");
+              void ask(t);
+            }}
+            className="flex min-w-0 flex-1 items-center gap-2"
+          >
+            <input
+              value={listening && question ? question : typed}
+              onChange={(e) => setTyped(e.target.value)}
+              readOnly={listening}
+              placeholder={
+                listening
+                  ? "Listening…"
+                  : sharing
+                    ? "Ask about your screen…"
+                    : "Ask, or share a screen first"
+              }
+              className="min-w-0 flex-1 bg-transparent px-2 text-sm text-ink outline-none placeholder:text-faint"
+            />
+            <button
+              type="submit"
+              disabled={!typed.trim() || phase === "thinking"}
+              className="shrink-0 rounded-xl bg-raised px-3.5 py-2.5 text-sm text-ink transition enabled:hover:bg-line disabled:opacity-30"
+            >
+              Ask
+            </button>
+          </form>
+        </div>
       </div>
 
-      {/* ---------------------------------------------------------- side rail */}
-      <div className="flex flex-col gap-4">
-        <AskBar
-          phase={phase}
-          question={question}
-          typed={typed}
-          voiceIn={voiceIn}
-          onTypedChange={setTyped}
-          onSubmitTyped={() => {
-            const t = typed;
-            setTyped("");
-            void ask(t);
-          }}
-          onPressStart={beginListening}
-          onPressEnd={endListening}
-        />
-
-        {error ? (
-          <p className="animate-rise rounded-lg border border-ember-dim bg-ember-dim/20 px-3 py-2.5 text-sm text-ember">
-            {error}
-          </p>
-        ) : null}
-
-        {phase === "thinking" ? <AnswerSkeleton /> : null}
-
-        {phase === "answered" && result ? (
-          <AnswerCard
-            result={result}
-            stepIndex={stepIndex}
-            onStep={goToStep}
-            onReplayTrail={() => result.trail && onOpenTrail(result.trail)}
-            onSave={saveTrail}
-            saveState={saveState}
-          />
-        ) : null}
-
-        {phase === "idle" && !result ? <Hints capture={isCaptureSupported()} voice={voiceIn} /> : null}
-      </div>
+      {/* Keyboard hint, only while idle so it doesn't nag. */}
+      {voiceIn && phase === "idle" && !result ? (
+        <p className="absolute inset-x-0 bottom-1 z-30 text-center text-[11px] text-faint">
+          hold <kbd className="rounded border border-line px-1">Space</kbd> to speak
+        </p>
+      ) : null}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ pieces */
 
+function MicIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor" />
+      <path
+        d="M5 11a7 7 0 0 0 14 0M12 18v4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/**
+ * First thing anyone sees. Sells the loop in one line and asks for exactly one
+ * action — the permission prompt is friction enough without a wall of text in
+ * front of it.
+ */
 function ShareInvite({ onShare }: { onShare(): void }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 px-6 text-center">
       <div className="flex flex-col items-center gap-1.5" aria-hidden>
-        <span className="h-1.5 w-7 rounded-full bg-faint/70" />
-        <span className="h-1.5 w-11 rounded-full bg-faint/50" />
-        <span className="h-1.5 w-14 rounded-full bg-faint/30" />
+        <span className="h-1.5 w-8 rounded-full bg-faint/70" />
+        <span className="h-1.5 w-12 rounded-full bg-faint/50" />
+        <span className="h-1.5 w-16 rounded-full bg-faint/30" />
       </div>
-      <div>
-        <p className="text-sm text-ink">Cairn needs to see what you see.</p>
-        <p className="mt-1 text-xs text-faint">
-          Nothing is captured until you ask a question.
+      <div className="max-w-md">
+        <h2 className="text-xl font-medium tracking-tight text-ink">
+          Cairn needs to see what you see.
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted">
+          Share a window, then ask out loud. Nothing is captured until the moment you ask, and
+          nothing is stored unless you save it as a trail.
         </p>
       </div>
       <button
         onClick={onShare}
-        className="rounded-full bg-ember px-4 py-2 text-sm font-medium text-void transition hover:brightness-110"
+        className="rounded-full bg-ember px-5 py-2.5 text-sm font-medium text-void transition hover:brightness-110"
       >
         Share a screen
       </button>
-    </div>
-  );
-}
-
-interface AskBarProps {
-  phase: Phase;
-  question: string;
-  typed: string;
-  voiceIn: boolean;
-  onTypedChange(v: string): void;
-  onSubmitTyped(): void;
-  onPressStart(): void;
-  onPressEnd(): void;
-}
-
-function AskBar({
-  phase,
-  question,
-  typed,
-  voiceIn,
-  onTypedChange,
-  onSubmitTyped,
-  onPressStart,
-  onPressEnd,
-}: AskBarProps) {
-  const listening = phase === "listening";
-  return (
-    <div className="rounded-xl border border-line bg-surface p-3">
-      {voiceIn ? (
-        <>
-          <button
-            onMouseDown={onPressStart}
-            onMouseUp={onPressEnd}
-            onMouseLeave={onPressEnd}
-            onTouchStart={onPressStart}
-            onTouchEnd={onPressEnd}
-            className={`flex w-full items-center justify-center gap-2.5 rounded-lg py-3 text-sm font-medium transition ${
-              listening
-                ? "bg-ember text-void"
-                : "bg-raised text-ink hover:bg-line"
-            }`}
-          >
-            <span
-              className={`h-2 w-2 rounded-full ${listening ? "animate-ping bg-void" : "bg-ember"}`}
-            />
-            {listening ? "Listening…" : "Hold to ask"}
-          </button>
-          <p className="mt-2 text-center text-[11px] text-faint">
-            or hold <kbd className="rounded border border-line px-1">Space</kbd>
-          </p>
-          {listening && question ? (
-            <p className="mt-2 text-center text-sm text-muted">{question}</p>
-          ) : null}
-          <div className="my-3 h-px bg-line" />
-        </>
-      ) : null}
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSubmitTyped();
-        }}
-        className="flex gap-2"
-      >
-        <input
-          value={typed}
-          onChange={(e) => onTypedChange(e.target.value)}
-          placeholder={voiceIn ? "or type a question" : "Ask about your screen"}
-          className="min-w-0 flex-1 rounded-lg border border-line bg-void px-3 py-2 text-sm text-ink outline-none placeholder:text-faint focus:border-faint"
-        />
-        <button
-          type="submit"
-          disabled={!typed.trim()}
-          className="rounded-lg bg-raised px-3 py-2 text-sm text-ink transition enabled:hover:bg-line disabled:opacity-40"
-        >
-          Ask
-        </button>
-      </form>
-    </div>
-  );
-}
-
-function AnswerSkeleton() {
-  return (
-    <div className="space-y-2.5 rounded-xl border border-line bg-surface p-4">
-      <div className="shimmer h-3 w-2/3 rounded" />
-      <div className="shimmer h-3 w-full rounded" />
-      <div className="shimmer h-3 w-4/5 rounded" />
-    </div>
-  );
-}
-
-interface AnswerCardProps {
-  result: AskResult;
-  stepIndex: number;
-  onStep(i: number): void;
-  onReplayTrail(): void;
-  onSave(): void;
-  saveState: "none" | "saving" | "saved";
-}
-
-function AnswerCard({
-  result,
-  stepIndex,
-  onStep,
-  onReplayTrail,
-  onSave,
-  saveState,
-}: AnswerCardProps) {
-  const fromMemory = result.source === "trail";
-  return (
-    <div className="animate-rise rounded-xl border border-line bg-surface p-4">
-      {/* Provenance banner. The speed number is the argument, so it's shown. */}
-      <div
-        className={`mb-3 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-medium ${
-          fromMemory
-            ? "bg-moss-dim/40 text-moss"
-            : "bg-ember-dim/30 text-ember"
-        }`}
-      >
-        <span className={`h-1.5 w-1.5 rounded-full ${fromMemory ? "bg-moss" : "bg-ember"}`} />
-        {fromMemory ? "From team memory" : "Read live from your screen"}
-        <span className="ml-auto font-mono text-faint">{result.elapsedMs}ms</span>
-      </div>
-
-      <p className="text-sm text-ink">{result.summary}</p>
-
-      <ol className="mt-3 space-y-1">
-        {result.steps.map((s, i) => (
-          <li key={s.id}>
-            <button
-              onClick={() => onStep(i)}
-              className={`flex w-full gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition ${
-                i === stepIndex ? "bg-raised text-ink" : "text-muted hover:bg-raised/60"
-              }`}
-            >
-              <span
-                className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${
-                  i === stepIndex
-                    ? fromMemory
-                      ? "bg-moss text-void"
-                      : "bg-ember text-void"
-                    : "bg-line text-faint"
-                }`}
-              >
-                {i + 1}
-              </span>
-              {s.say}
-            </button>
-          </li>
-        ))}
-      </ol>
-
-      <div className="mt-3 flex items-center gap-2 border-t border-line pt-3">
-        <button
-          onClick={() => onStep(stepIndex - 1)}
-          disabled={stepIndex === 0}
-          className="rounded-lg bg-raised px-2.5 py-1.5 text-xs text-ink transition enabled:hover:bg-line disabled:opacity-30"
-        >
-          Back
-        </button>
-        <button
-          onClick={() => onStep(stepIndex + 1)}
-          disabled={stepIndex >= result.steps.length - 1}
-          className="rounded-lg bg-raised px-2.5 py-1.5 text-xs text-ink transition enabled:hover:bg-line disabled:opacity-30"
-        >
-          Next
-        </button>
-
-        <div className="ml-auto">
-          {fromMemory ? (
-            <button
-              onClick={onReplayTrail}
-              className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-moss transition hover:bg-moss-dim/30"
-            >
-              Open trail →
-            </button>
-          ) : saveState === "saved" ? (
-            <span className="text-xs text-moss">Saved for the team ✓</span>
-          ) : (
-            <button
-              onClick={onSave}
-              disabled={saveState === "saving"}
-              className="rounded-lg bg-ember px-2.5 py-1.5 text-xs font-medium text-void transition hover:brightness-110 disabled:opacity-50"
-            >
-              {saveState === "saving" ? "Saving…" : "Save as trail"}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Hints({ capture, voice }: { capture: boolean; voice: boolean }) {
-  return (
-    <div className="rounded-xl border border-line bg-surface p-4 text-sm">
-      <p className="text-muted">Try asking:</p>
-      <ul className="mt-2 space-y-1.5 text-ink">
-        <li>“What does this error mean?”</li>
-        <li>“Where do I change the billing address?”</li>
-        <li>“How do I export this at 3x?”</li>
-      </ul>
-      {!capture || !voice ? (
-        <p className="mt-3 border-t border-line pt-3 text-xs text-faint">
-          {!capture
-            ? "Screen sharing isn't available in this browser — Chrome, Edge, or desktop Safari work."
-            : "Voice input isn't available in this browser, so use the text box."}
+      {!isCaptureSupported() ? (
+        <p className="text-xs text-faint">
+          This browser can&apos;t share a screen — try Chrome, Edge, or desktop Safari.
         </p>
       ) : null}
     </div>

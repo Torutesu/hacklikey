@@ -132,6 +132,72 @@ body {
   animation: cairn-shimmer 1.4s linear infinite;
 }
 
+/*
+ * Floating chrome.
+ *
+ * Everything that sits over the shared screen uses this: the top bar, the ask
+ * bar, the caption, the drawer. One treatment for all of it, so the overlay
+ * reads as a single layer of glass above the content rather than a handful of
+ * unrelated panels. The saturate() matters — without it, blurred dark UI over a
+ * bright screenshot goes muddy grey.
+ */
+.glass {
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid color-mix(in srgb, var(--color-ink) 10%, transparent);
+  box-shadow:
+    0 18px 50px -12px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 0 color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+
+/*
+ * The caption swaps between the top and bottom of the stage depending on where
+ * the pointer is, so it animates in from whichever edge it's arriving at.
+ * Sliding the wrong way reads as the caption being shoved aside rather than
+ * deliberately stepping out of the pointer's way.
+ */
+@keyframes cairn-caption-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes cairn-caption-down {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-caption-up {
+  animation: cairn-caption-up 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-caption-down {
+  animation: cairn-caption-down 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Slow breathing glow under the ask bar while the mic is open. */
+@keyframes cairn-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-ember) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--color-ember) 0%, transparent);
+  }
+}
+.animate-breathe {
+  animation: cairn-breathe 1.8s ease-out infinite;
+}
+
 /* Respect users who've asked the OS to calm things down. */
 @media (prefers-reduced-motion: reduce) {
   *,

@@ -28,7 +28,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      {/* The app owns the whole viewport and scrolls nothing at the document
+          level — the stage is fixed and the drawer scrolls internally. */}
+      <body className="h-full overflow-hidden">{children}</body>
     </html>
   );
 }
