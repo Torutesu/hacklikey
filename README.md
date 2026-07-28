@@ -1,12 +1,14 @@
 # Cairn
 
-Share your screen, ask a question out loud, and Cairn points at the answer on screen and talks you through it.
+*[English version here](./README.en.md)*
 
-Then it keeps the answer. Anything Cairn works out for you can be saved as a "trail", and the next person on your team who asks the same thing gets that trail back instantly instead of waiting on the model again.
+画面を共有して声で質問すると、画面上のどこを見ればいいかを指し示しながら、音声で手順を案内します。
 
-The name comes from the piles of stones hikers leave to mark a path for whoever comes next.
+そして、その答えを憶えています。解決した内容は「トレイル」として保存でき、次に同じことで詰まった人は、モデルを待たずにその手順をそのまま受け取れます。
 
-Live demo: _(deploying — URL will go here)_
+名前は、登山道で次に来る人のために石を積んでおくケルンから取りました。
+
+デモ URL: _(デプロイ後にここへ記載します)_
 
 ## 概要
 
@@ -14,21 +16,17 @@ Clicky を参考にしつつ、「画面を見て教える」だけでなく「�
 
 画面共有 API で画面を取得して Claude が読み取り、対象のボタンの位置にカーソルを動かしながら音声で案内します。ブラウザだけで動くのでインストールは不要です。
 
-Clicky と一番違うのは記憶する点です。Clicky の支援は 1 対 1 で、答えた瞬間に消えます。同じ問題に 5 人がぶつかれば 5 回モデルに聞くことになります。Cairn では解決した手順が「トレイル」として残り、2 人目以降はモデルを呼ばずに数ミリ秒で同じ手順を再生できます。使うほど速くなり、コストも下がります。
-
-これが「複数人での利用を想定した構造」に対する自分なりの答えです。
-
 なお Clicky は macOS ネイティブですが、本実装では意図的に Web を選びました。理由は下の「作るときに決めたこと」に書いています。
 
 ## なぜこれを作ったか
 
 Clicky のコアな体験はよくできています。ホットキーを押す、画面を見てもらう、声で聞く、画面上で指してもらう。ここは素直に踏襲しました。
 
-ただ、その助けはその場限りです。答えた瞬間に消えます。
+ただ、その助けはその場限りです。答えた瞬間に消えます。同じ問題に 5 人がぶつかれば、初日にモデルが出したはずの答えのために、5 回課金して 5 人が待つことになります。
 
-そこで一点だけ足しました。**答えをトレイルとして保存でき、質問が来たら必ずモデルより先にトレイルを検索する。** 順番が逆だと意味がありません。
+そこで一点だけ足しました。**答えをトレイルとして保存でき、質問が来たら必ずモデルより先にトレイルを検索する。** 逆にすると単なるキャッシュで、完全に同じ質問にしか当たりません。
 
-その結果こうなります。
+これが「複数人での利用を想定した構造」に対する自分なりの答えです。結果としてこうなります。
 
 |  | Clicky | Cairn |
 |---|---|---|
