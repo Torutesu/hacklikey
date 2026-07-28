@@ -1,0 +1,167 @@
+import Anthropic from "@anthropic-ai/sdk";
+import type { ModelAnswer } from "./types";
+
+/**
+ * The single model call behind live guidance.
+ *
+ * Design notes worth knowing before editing:
+ *
+ *  - Effort is pinned to "low". This is a latency-critical, single-screenshot
+ *    reading task, not a reasoning task — the user is waiting with their screen
+ *    shared. Thinking is deliberately left ON (the default) rather than
+ *    disabled: on this model disabling it can leak reasoning into the visible
+ *    answer, and low effort already buys back the latency.
+ *
+ *  - Output is constrained by JSON schema rather than parsed out of prose, so
+ *    the pointer coordinates are structurally guaranteed and the UI never has
+ *    to defend against a malformed answer.
+ *
+ *  - Coordinates are normalized 0..1 rather than pixels, so the client can
+ *    downscale frames for bandwidth without the annotation drifting.
+ */
+
+const MODEL = "claude-opus-5";
+
+const ANSWER_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: {
+      type: "string",
+      description:
+        "One sentence, spoken aloud before the steps. Say what the user is about to do, not what you are doing.",
+    },
+    app: {
+      type: "string",
+      description:
+        "Best guess at the application or website visible on screen, e.g. 'Figma', 'Gmail', 'VS Code'. Use 'Unknown' if unclear.",
+    },
+    title: {
+      type: "string",
+      description:
+        "A short imperative title for this walkthrough if it were saved for a teammate, e.g. 'Export a frame at 3x'. Max 60 characters.",
+    },
+    steps: {
+      type: "array",
+      description: "One to four steps. Each is a single concrete action.",
+      items: {
+        type: "object",
+        properties: {
+          say: {
+            type: "string",
+            description:
+              "The instruction, spoken aloud. One action. Imperative voice. No preamble, no numbering.",
+          },
+          label: {
+            type: ["string", "null"],
+            description:
+              "Two or three words naming the thing being pointed at, e.g. 'Export button'. Null if not pointing at anything.",
+          },
+          target: {
+            type: ["object", "null"],
+            description:
+              "Normalized bounding box of the element to point at, or null if this step has no on-screen target.",
+            properties: {
+              x: { type: "number", description: "Left edge, 0..1" },
+              y: { type: "number", description: "Top edge, 0..1" },
+              w: { type: "number", description: "Width, 0..1" },
+              h: { type: "number", description: "Height, 0..1" },
+            },
+            required: ["x", "y", "w", "h"],
+            additionalProperties: false,
+          },
+        },
+        required: ["say", "label", "target"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["summary", "app", "title", "steps"],
+  additionalProperties: false,
+} as const;
+
+const SYSTEM = `You are Cairn, a guide that looks at someone's screen and shows them the next thing to do.
+
+You are given one screenshot and one question. Answer only about what is actually visible.
+
+How to answer:
+- Give one to four steps. Each step is one action the person performs.
+- Point at things. For each step, set "target" to the bounding box of the exact control to interact with, in normalized coordinates where (0,0) is the top-left of the image and (1,1) is the bottom-right. Keep the box tight around the control.
+- Set "target" to null only when the step genuinely has no on-screen referent (for example, "wait for the build to finish").
+- If what they need is not on this screen, say so plainly in the first step and point at the control that navigates there.
+- If the screenshot does not show enough to answer, say what you can see and what you need them to open. Never invent a control that is not visible.
+
+How to write:
+- Speak the steps aloud to a colleague. Short sentences, plain words, second person.
+- Be brief. Skip preamble, restating the question, and closing offers of further help.
+- Do not number the steps; the interface does that.
+- Do not describe the screenshot back to them. They are looking at it.`;
+
+let client: Anthropic | null = null;
+
+function getClient(): Anthropic {
+  if (!client) {
+    // Constructed lazily so a missing key surfaces as a handled API error at
+    // request time rather than crashing the server at import time.
+    client = new Anthropic();
+  }
+  return client;
+}
+
+export class MissingApiKeyError extends Error {
+  constructor() {
+    super("ANTHROPIC_API_KEY is not set");
+    this.name = "MissingApiKeyError";
+  }
+}
+
+/**
+ * Reads a screen capture and returns pointed, spoken guidance.
+ *
+ * @param frameBase64 Raw base64 (no data-URL prefix) of a PNG/JPEG capture.
+ * @param mediaType   MIME type matching the capture.
+ * @param question    What the user asked, transcribed or typed.
+ */
+export async function readScreen(
+  frameBase64: string,
+  mediaType: "image/png" | "image/jpeg",
+  question: string,
+): Promise<ModelAnswer> {
+  if (!process.env.ANTHROPIC_API_KEY) throw new MissingApiKeyError();
+
+  const response = await getClient().messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: SYSTEM,
+    output_config: {
+      effort: "low",
+      format: { type: "json_schema", schema: ANSWER_SCHEMA },
+    },
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: mediaType, data: frameBase64 },
+          },
+          { type: "text", text: question },
+        ],
+      },
+    ],
+  });
+
+  // Safety classifiers can decline with a normal 200 — check before reading
+  // content, or this throws on an empty array.
+  if (response.stop_reason === "refusal") {
+    throw new Error(
+      "Cairn could not answer that one. Try rephrasing, or ask about a different part of the screen.",
+    );
+  }
+
+  const text = response.content.find((b) => b.type === "text");
+  if (!text || text.type !== "text") {
+    throw new Error("Model returned no answer.");
+  }
+
+  return JSON.parse(text.text) as ModelAnswer;
+}
